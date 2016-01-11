@@ -1,0 +1,86 @@
+#!/bin/bash
+
+TYPE=${TYPE:-rr}
+echo Using IPVS Scheduler: ${TYPE}
+
+TTL=${TTL:-10}
+echo Settings TTL: ${TTL} seconds
+
+echo "==> Starting etcd backed IPVS Load Balancing"
+if ipvsadm > /dev/null; then
+    echo "----> ipvsadm test successful"
+else
+    echo "----> ipvsadmn test FAILED"
+    echo "You may need to enable ipvs in your kernel"
+    echo '$ sudo modprobe ip_vs'
+    echo '$ sudo modprobe ip_vs_rr'
+    echo '$ sudo modprobe ip_vs_sh'
+    echo "Did you use --privileged and --net=host ?"
+fi
+
+echo "----> Loading Configuration"
+
+if [[ -n ${ETCD_PATH} ]]; then
+    echo ETCD_PATH set to ${ETCD_PATH}
+else
+    echo Environment variable ETCD_PATH must be set.  Example: /services/database
+    exit 1
+fi
+
+if [[ -n ${ETCD_HOST} ]]; then
+    ETCD_OPTIONS="--no-sync -C $ETCD_HOST"
+    echo etcd host: $ETCD_HOST
+else
+    echo Environment variable ETCD_HOST must be set.  Example: 192.168.0.1:4001
+    exit 1
+fi
+
+if [[ -n ${SOURCE} ]]; then
+    echo Loadbalancing for ${SOURCE}
+else
+    echo Environment variable SOURCE must be set.  Example: 192.168.0.1:3306
+    exit 1
+fi
+
+# Create Virtual Server
+echo "----> Creating Virtual Server ${SOURCE}"
+ipvsadm -A -t ${SOURCE} -s ${TYPE} || exit 1
+
+# On kill signal Delete Virtual Server
+trap "echo Stopping Virtual Server ${SOURCE}; ipvsadm -D -t ${SOURCE}; rm -rf /tmp/ipvs; exit 0" SIGINT SIGTERM
+
+# Start with empty server list
+mkdir -p /tmp/ipvs
+touch /tmp/ipvs/last
+
+# Loop forever
+while :
+do
+
+    # rotate curr to last
+    [[ -e /tmp/ipvs/curr ]] && mv /tmp/ipvs/curr /tmp/ipvs/last
+
+    # write out etcd keypairs to curr
+    for i in `etcdctl $ETCD_OPTIONS ls $ETCD_PATH | sort | xargs`; do
+        etcdctl $ETCD_OPTIONS get $i >> /tmp/ipvs/curr
+    done
+
+    # look at differences, add new, remove old.
+
+    diff -U 0 /tmp/ipvs/last /tmp/ipvs/curr | tail +4 | while read line; do
+        if [[ ${line:0:1} == "-" ]]; then
+            SERVER=${line:(1)}
+            echo "----> Removing ${SERVER}"
+            ipvsadm -d -t ${SOURCE} -r ${SERVER}
+        elif [[ ${line:0:1} == "+" ]]; then
+            SERVER=${line:(1)}
+            echo "----> Adding ${SERVER}"
+            ipvsadm -a -t ${SOURCE} -r ${SERVER} -m -w 1
+        fi
+    done
+
+    [[ -n ${DEBUG} ]] && ipvsadm
+    sleep ${TTL}
+done
+
+
