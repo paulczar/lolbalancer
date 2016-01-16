@@ -21,10 +21,11 @@ RUN \
     && cp etcd-v$ETCD_VERSION-linux-amd64/etcdctl /usr/local/bin/etcdctl \
     && rm -rf etcd-v$ETCD_VERSION-linux-amd64 \
     && chmod +x /usr/local/bin/etcd \
-    && chmod +x /usr/local/bin/etcdctl
+    && chmod +x /usr/local/bin/etcdctl \
+    && mkdir -p /lolbalancer
 
-COPY lolbalancer /usr/bin/lolbalancer
+COPY lolbalancer /lolbalancer/lolbalancer
 
-RUN chmod +x /usr/bin/lolbalancer
+RUN chmod +x /lolbalancer/lolbalancer
 
-CMD ["/usr/bin/lolbalancer"]
+CMD ["/lolbalancer/lolbalancer"]

@@ -51,9 +51,9 @@ $ docker run -d \
 Run three nginx containers:
 
 ```
-$ docker run -d -p 80 nginx
-$ docker run -d -p 80 nginx
-$ docker run -d -p 80 nginx
+$ docker run -d -p 80 --name nginx1 nginx
+$ docker run -d -p 80 --name nginx2 nginx
+$ docker run -d -p 80 --name nginx3 nginx
 ```
 
 Run the lolbalancer container:
@@ -105,6 +105,37 @@ TCP  localhost:http-alt rr
   -> paulczarlaptop:32770         Masq    1      0          0         
 ```
 
+Get load balancer statistics:
+
+```
+$ docker exec lolbalancer ipvsadm -L -n --stats
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port               Conns   InPkts  OutPkts  InBytes OutBytes
+  -> RemoteAddress:Port
+TCP  127.0.0.1:8080                      1        6        4      398     1065
+  -> 127.0.1.1:32776                     1        6        4      398     1065
+  -> 127.0.1.1:32777                     0        0        0        0        0
+
+$ docker exec lolbalancer ipvsadm -L -n --rate 
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port                 CPS    InPPS   OutPPS    InBPS   OutBPS
+  -> RemoteAddress:Port
+TCP  127.0.0.1:8080                      0        0        0        0        0
+  -> 127.0.1.1:32776                     0        0        0        0        0
+  -> 127.0.1.1:32777                     0        0        0        0        0
+  -> 127.0.1.1:32778                     0        0        0        0        0
+```
+
+Cleanup:
+
+_Stop lolbalancer without using `-f` to ensure the loadbalancer is stopped gracefully._
+
+```
+$ docker stop lolbalancer && docker rm lolbalancer
+$ docker rm -f nginx1 nginx2 nginx3 etcd registrator
+
+```
+
 ### MySQL
 
 If you are running [Percona Galera](http://github.com/paulczar/percona-galera) across several CoreOS nodes the following will Load Balance them with Source Hashing: 
@@ -114,7 +145,7 @@ If you are running [Percona Galera](http://github.com/paulczar/percona-galera) a
 $ sudo modprobe ip_vs
 $ sudo modprobe ip_vs_sh
 
-$ docker run -d --privileged --net=host
+$ docker run -d --privileged \
   -e DEBUG=1 \
   -e ETCD_PATH=/services/database_port \
   -e ETCD_HOST=172.17.8.102:4001 \

@@ -1,10 +1,13 @@
 #!/bin/bash
 
+# set debug based on envvar
+[[ -n $DEBUG ]] && set -x
+
+DIR=$(dirname $0)
+
 TYPE=${TYPE:-rr}
-echo Using IPVS Scheduler: ${TYPE}
 
 TTL=${TTL:-10}
-echo Settings TTL: ${TTL} seconds
 
 echo "==> Starting etcd backed IPVS Load Balancing"
 if ipvsadm > /dev/null; then
@@ -19,6 +22,9 @@ else
 fi
 
 echo "----> Loading Configuration"
+
+echo IPVS Scheduler: ${TYPE}
+echo TTL: ${TTL} seconds
 
 if [[ -n ${ETCD_PATH} ]]; then
     echo ETCD_PATH set to ${ETCD_PATH}
@@ -42,6 +48,11 @@ else
     exit 1
 fi
 
+# set up working dir and state files
+mkdir -p ${DIR}
+LAST="${DIR}/$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)"
+CURR="${DIR}/$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)"
+
 # Create Virtual Server
 echo "----> Creating Virtual Server ${SOURCE}"
 ipvsadm -A -t ${SOURCE} -s ${TYPE} || exit 1
@@ -49,25 +60,30 @@ ipvsadm -A -t ${SOURCE} -s ${TYPE} || exit 1
 # On kill signal Delete Virtual Server
 trap "echo Stopping Virtual Server ${SOURCE}; ipvsadm -D -t ${SOURCE}; rm -rf /tmp/ipvs; exit 0" SIGINT SIGTERM
 
-# Start with empty server list
-mkdir -p /tmp/ipvs
-touch /tmp/ipvs/last
+touch ${LAST}
 
 # Loop forever
 while :
 do
 
     # rotate curr to last
-    [[ -e /tmp/ipvs/curr ]] && mv /tmp/ipvs/curr /tmp/ipvs/last
+    [[ -e ${CURR} ]] && mv ${CURR} ${LAST} && touch ${CURR}
+
+    # wait until etcd is available
+    FAILCOUNT = 0
+    while ! etcdctl $ETCD_OPTIONS ls $ETCD_PATH > /dev/null; do
+        FAILCOUNT=$[FAILCOUNT + 1]
+        echo "----> Cannot connect to $ETCD_HOST/$ETCD_PATH - attempt ${FAILCOUNT}"
+        sleep 5
+    done
 
     # write out etcd keypairs to curr
     for i in `etcdctl $ETCD_OPTIONS ls $ETCD_PATH | sort | xargs`; do
-        etcdctl $ETCD_OPTIONS get $i >> /tmp/ipvs/curr
+        etcdctl $ETCD_OPTIONS get $i >> ${CURR}
     done
 
     # look at differences, add new, remove old.
-
-    diff -U 0 /tmp/ipvs/last /tmp/ipvs/curr | tail +4 | while read line; do
+    diff -U 0 ${LAST} ${CURR} | tail +4 | while read line; do
         if [[ ${line:0:1} == "-" ]]; then
             SERVER=${line:(1)}
             echo "----> Removing ${SERVER}"
@@ -82,5 +98,3 @@ do
     [[ -n ${DEBUG} ]] && ipvsadm
     sleep ${TTL}
 done
-
-
