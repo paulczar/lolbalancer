@@ -70,7 +70,7 @@ do
     [[ -e ${CURR} ]] && mv ${CURR} ${LAST} && touch ${CURR}
 
     # wait until etcd is available
-    FAILCOUNT = 0
+    FAILCOUNT=0
     while ! etcdctl $ETCD_OPTIONS ls $ETCD_PATH > /dev/null; do
         FAILCOUNT=$[FAILCOUNT + 1]
         echo "----> Cannot connect to $ETCD_HOST/$ETCD_PATH - attempt ${FAILCOUNT}"
